@@ -359,35 +359,95 @@ class EnhancedScheduledCheckinService:
         
         try:
             user.session = requests.Session()
+            
+            # 禁用代理
+            user.session.proxies = {
+                'http': '',
+                'https': ''
+            }
+            user.session.trust_env = False
+            
             user.session.headers.update({
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_1 like Mac OS X) AppleWebKit/605.1.15",
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15",
                 "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "zh-Hans-US;q=1",
-                "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-                "device_type": "1",
-                "adpn": "com.weaver.emobile7"
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive"
             })
             
-            # 设置认证信息
-            auth_code = "8e8163702d18145750fdf8b865e9c476"
-            user.session.cookies.set("loginidweaver", user.user_id)
-            user.session.cookies.set("languageidweaver", "7")
-            user.session.headers.update({
-                "emheadercode": auth_code,
-                "emheaderuserid": user.user_id,
-                "emdeviceid": "a5278d55-e17c-4f93-997b-3e009abe3222",
-                "emaccesstk": auth_code
-            })
+            # 调用真正的登录API
+            login_url = f"{self.auth_url}/emp/passport/login"
+            login_data = {
+                'loginid': user.username,
+                'password': user.password,
+                'device_type': '1',
+                'client_type': '2'
+            }
             
-            user.last_login_time = datetime.now()
-            user.login_token = auth_code
-            user.consecutive_failures = 0
+            # 设置登录请求的headers
+            login_headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15',
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json',
+                'Accept-Language': 'zh-CN,zh;q=0.9'
+            }
             
-            logger.info(f"用户 {user} 认证成功")
-            return True
+            response = user.session.post(login_url, json=login_data, headers=login_headers, timeout=10)
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    
+                    # 检查登录是否成功
+                    if data.get('errcode') == 0:
+                        # 提取用户信息
+                        user_id = data.get('base_user_id')
+                        access_token = data.get('access_token')
+                        user_name = data.get('base_user_name')
+                        
+                        if user_id and access_token:
+                            # 设置认证信息
+                            user.session.cookies.set('loginidweaver', str(user_id))
+                            user.session.headers.update({
+                                'emheadercode': access_token,
+                                'emaccesstk': access_token,
+                                'emheaderuserid': str(user_id),
+                                'device_type': '1',
+                                'adpn': 'com.weaver.emobile7'
+                            })
+                            
+                            user.last_login_time = datetime.now()
+                            user.login_token = access_token
+                            user.consecutive_failures = 0
+                            
+                            logger.info(f"✅ 用户 {user} 认证成功")
+                            logger.info(f"   用户ID: {user_id}")
+                            logger.info(f"   姓名: {user_name}")
+                            return True
+                        else:
+                            logger.error(f"❌ 登录响应中缺少用户ID或访问token")
+                            logger.error(f"   响应数据: {data}")
+                            user.consecutive_failures += 1
+                            return False
+                    else:
+                        error_msg = data.get('errmsg') or '登录失败'
+                        logger.error(f"❌ 用户 {user} 登录失败: {error_msg}")
+                        user.consecutive_failures += 1
+                        return False
+                        
+                except json.JSONDecodeError:
+                    logger.error(f"❌ 用户 {user} 登录响应不是有效的JSON格式")
+                    logger.error(f"   响应内容: {response.text[:200]}...")
+                    user.consecutive_failures += 1
+                    return False
+            else:
+                logger.error(f"❌ 用户 {user} 登录请求失败: HTTP {response.status_code}")
+                logger.error(f"   响应内容: {response.text[:200]}...")
+                user.consecutive_failures += 1
+                return False
             
         except Exception as e:
-            logger.error(f"用户 {user} 认证失败: {e}")
+            logger.error(f"❌ 用户 {user} 认证异常: {str(e)}")
             user.consecutive_failures += 1
             return False
 
