@@ -30,6 +30,8 @@ import requests
 from typing import Dict, List, Optional, Union
 import argparse
 from logging.handlers import RotatingFileHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import traceback
 
 # 配置日志轮转
 def setup_logging():
@@ -132,10 +134,58 @@ class EMobileUser:
     def __str__(self):
         return f"EMobileUser({self.display_name}[{self.user_id}])"
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """健康检查 HTTP 处理器"""
+    
+    def __init__(self, service_instance, *args, **kwargs):
+        self.service = service_instance
+        super().__init__(*args, **kwargs)
+    
+    def do_GET(self):
+        """处理 GET 请求"""
+        if self.path == '/health':
+            try:
+                health_status = self.service.health_check()
+                response = json.dumps(health_status, ensure_ascii=False, indent=2)
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(response.encode('utf-8'))))
+                self.end_headers()
+                self.wfile.write(response.encode('utf-8'))
+            except Exception as e:
+                error_response = json.dumps({
+                    "status": "error",
+                    "message": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }, ensure_ascii=False, indent=2)
+                
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(error_response.encode('utf-8'))))
+                self.end_headers()
+                self.wfile.write(error_response.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+    
+    def log_message(self, format, *args):
+        """重写日志方法，避免在控制台输出过多信息"""
+        pass
+
+def create_health_check_handler(service):
+    """创建健康检查处理器工厂"""
+    def handler(*args, **kwargs):
+        return HealthCheckHandler(service, *args, **kwargs)
+    return handler
+
 class EnhancedScheduledCheckinService:
     """增强版定时打卡服务"""
     
     def __init__(self, config_file: str = "production_config.yaml"):
+        """初始化服务"""
         self.config_file = config_file
         self.config = self.load_config()
         self.users: List[EMobileUser] = []
@@ -152,13 +202,22 @@ class EnhancedScheduledCheckinService:
         
         # 监控配置
         self.health_check_port = self.config.get('monitoring', {}).get('health_check_port', 8080)
+        self.http_server = None
+        self.http_thread = None
         
-        self.load_users()
-        self.setup_schedules()
-        
-        # 设置信号处理
+        # 注册信号处理器
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+        
+        # 如果配置文件不存在，创建默认配置
+        if not Path(config_file).exists():
+            logger.warning(f"配置文件 {config_file} 不存在，创建默认配置")
+            self.create_default_config()
+            sys.exit(1)
+        
+        # 加载用户和设置定时任务
+        self.load_users()
+        self.setup_schedules()
         
         logger.info(f"增强版定时打卡服务初始化完成，加载 {len(self.users)} 个用户")
 
@@ -646,6 +705,9 @@ class EnhancedScheduledCheckinService:
         logger.info("🚀 定时打卡服务启动")
         self.running = True
         
+        # 启动健康检查服务器
+        self.start_health_check_server()
+        
         try:
             while self.running:
                 schedule.run_pending()
@@ -659,6 +721,9 @@ class EnhancedScheduledCheckinService:
         """停止服务"""
         logger.info("🛑 定时打卡服务停止")
         self.running = False
+        
+        # 停止健康检查服务器
+        self.stop_health_check_server()
         
         # 清理资源
         for user in self.users:
@@ -675,6 +740,32 @@ class EnhancedScheduledCheckinService:
                 success = self.punch_clock_for_user(user, sign_type)
                 logger.info(f"测试结果: {'成功' if success else '失败'}")
                 time.sleep(2)
+
+    def start_health_check_server(self):
+        """启动健康检查 HTTP 服务器"""
+        try:
+            handler = create_health_check_handler(self)
+            self.http_server = HTTPServer(('0.0.0.0', self.health_check_port), handler)
+            
+            def run_server():
+                logger.info(f"🌡️ 健康检查服务启动在端口 {self.health_check_port}")
+                self.http_server.serve_forever()
+            
+            self.http_thread = threading.Thread(target=run_server, daemon=True)
+            self.http_thread.start()
+            
+        except Exception as e:
+            logger.error(f"启动健康检查服务器失败: {e}")
+
+    def stop_health_check_server(self):
+        """停止健康检查 HTTP 服务器"""
+        if self.http_server:
+            try:
+                self.http_server.shutdown()
+                self.http_server.server_close()
+                logger.info("🌡️ 健康检查服务器已停止")
+            except Exception as e:
+                logger.error(f"停止健康检查服务器失败: {e}")
 
 def main():
     """主函数"""
