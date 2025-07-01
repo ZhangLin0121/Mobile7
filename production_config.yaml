@@ -14,7 +14,7 @@ schedule:
       type: 'on'
     evening:
       enabled: true 
-      time_range: ['18:00', '19:00']  # 工作日下班时间范围
+      time_range: ['20:00', '21:00']  # 工作日下班时间范围
       type: 'off'
   
   # 周末打卡配置
@@ -34,8 +34,8 @@ schedule:
 
 # 用户配置
 users:
-  - username: '你的用户名'  # 请替换为实际用户名
-    password: '你的密码'    # 请替换为实际密码
+  - username: 'root'  # 请替换为实际用户名
+    password: '123456'    # 请替换为实际密码
     user_id: '585'
     display_name: '张志远'
     enabled: true
@@ -46,8 +46,8 @@ users:
     checkin_rules:
       workday_morning_enabled: true   # 工作日上班打卡
       workday_evening_enabled: true   # 工作日下班打卡
-      weekend_morning_enabled: true   # 周末上班打卡
-      weekend_evening_enabled: true   # 周末下班打卡
+      weekend_morning_enabled: false   # 周末上班打卡
+      weekend_evening_enabled: false   # 周末下班打卡
 
 # 监控配置
 monitoring:
