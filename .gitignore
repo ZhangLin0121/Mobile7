@@ -61,4 +61,5 @@ config_local.yaml
 
 # Backup files
 *.bak
-*.backup 
+*.backup checkin.log
+punch_records.json

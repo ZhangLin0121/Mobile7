@@ -1,0 +1,19 @@
+schedule:
+  evening:
+    end: '18:00'
+    start: '17:30'
+  morning:
+    end: 07:00
+    start: 06:00
+server:
+  auth_url: http://223.76.229.248:8999
+  base_url: http://223.76.229.248:11032
+users:
+- display_name: 张志远
+  enabled: true
+  location:
+    latitude: '30.487572428385416'
+    longitude: '114.50522216796875'
+    position: 中国武汉市洪山区高新大道772号武汉东湖新技术开发区
+  password: '123456'
+  username: zhangzhiyuan
