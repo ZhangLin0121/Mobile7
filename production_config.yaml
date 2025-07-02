@@ -34,7 +34,7 @@ schedule:
 
 # 用户配置
 users:
-  - username: 'root'  # 请替换为实际用户名
+  - username: 'zhangzhiyuan'  # 请替换为实际用户名
     password: '123456'    # 请替换为实际密码
     user_id: '585'
     display_name: '张志远'
