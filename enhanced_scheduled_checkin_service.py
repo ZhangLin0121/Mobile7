@@ -416,99 +416,142 @@ class EnhancedScheduledCheckinService:
         """用户认证登录"""
         logger.info(f"开始认证用户: {user}")
         
-        try:
-            user.session = requests.Session()
-            
-            # 禁用代理
-            user.session.proxies = {
-                'http': '',
-                'https': ''
-            }
-            user.session.trust_env = False
-            
-            user.session.headers.update({
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "zh-CN,zh;q=0.9",
-                "Accept-Encoding": "gzip, deflate",
-                "Connection": "keep-alive"
-            })
-            
-            # 调用真正的登录API
-            login_url = f"{self.auth_url}/emp/passport/login"
-            login_data = {
-                'loginid': user.username,
-                'password': user.password,
-                'device_type': '1',
-                'client_type': '2'
-            }
-            
-            # 设置登录请求的headers
-            login_headers = {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15',
-                'Accept': 'application/json, text/plain, */*',
-                'Content-Type': 'application/json',
-                'Accept-Language': 'zh-CN,zh;q=0.9'
-            }
-            
-            response = user.session.post(login_url, json=login_data, headers=login_headers, timeout=10)
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    
-                    # 检查登录是否成功
-                    if data.get('errcode') == 0:
-                        # 提取用户信息
-                        user_id = data.get('base_user_id')
-                        access_token = data.get('access_token')
-                        user_name = data.get('base_user_name')
+        # 添加重试机制
+        max_retries = 3
+        retry_delay = [2, 5, 10]  # 重试延迟时间（秒）
+        
+        for attempt in range(max_retries):
+            try:
+                user.session = requests.Session()
+                
+                # 禁用代理
+                user.session.proxies = {
+                    'http': '',
+                    'https': ''
+                }
+                user.session.trust_env = False
+                
+                user.session.headers.update({
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15",
+                    "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Connection": "keep-alive"
+                })
+                
+                # 调用真正的登录API
+                login_url = f"{self.auth_url}/emp/passport/login"
+                login_data = {
+                    'loginid': user.username,
+                    'password': user.password,
+                    'device_type': '1',
+                    'client_type': '2'
+                }
+                
+                # 设置登录请求的headers
+                login_headers = {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json',
+                    'Accept-Language': 'zh-CN,zh;q=0.9'
+                }
+                
+                if attempt > 0:
+                    logger.info(f"第 {attempt + 1} 次重试认证用户: {user}")
+                
+                response = user.session.post(login_url, json=login_data, headers=login_headers, timeout=30)
+                
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
                         
-                        if user_id and access_token:
-                            # 设置认证信息
-                            user.session.cookies.set('loginidweaver', str(user_id))
-                            user.session.headers.update({
-                                'emheadercode': access_token,
-                                'emaccesstk': access_token,
-                                'emheaderuserid': str(user_id),
-                                'device_type': '1',
-                                'adpn': 'com.weaver.emobile7'
-                            })
+                        # 检查登录是否成功
+                        if data.get('errcode') == 0:
+                            # 提取用户信息
+                            user_id = data.get('base_user_id')
+                            access_token = data.get('access_token')
+                            user_name = data.get('base_user_name')
                             
-                            user.last_login_time = datetime.now()
-                            user.login_token = access_token
-                            user.consecutive_failures = 0
-                            
-                            logger.info(f"✅ 用户 {user} 认证成功")
-                            logger.info(f"   用户ID: {user_id}")
-                            logger.info(f"   姓名: {user_name}")
-                            return True
+                            if user_id and access_token:
+                                # 设置认证信息
+                                user.session.cookies.set('loginidweaver', str(user_id))
+                                user.session.headers.update({
+                                    'emheadercode': access_token,
+                                    'emaccesstk': access_token,
+                                    'emheaderuserid': str(user_id),
+                                    'device_type': '1',
+                                    'adpn': 'com.weaver.emobile7'
+                                })
+                                
+                                user.last_login_time = datetime.now()
+                                user.login_token = access_token
+                                user.consecutive_failures = 0
+                                
+                                logger.info(f"✅ 用户 {user} 认证成功")
+                                logger.info(f"   用户ID: {user_id}")
+                                logger.info(f"   姓名: {user_name}")
+                                if attempt > 0:
+                                    logger.info(f"   重试 {attempt + 1} 次后成功")
+                                return True
+                            else:
+                                logger.error(f"❌ 登录响应中缺少用户ID或访问token")
+                                logger.error(f"   响应数据: {data}")
+                                if attempt < max_retries - 1:
+                                    logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                                    time.sleep(retry_delay[attempt])
+                                    continue
                         else:
-                            logger.error(f"❌ 登录响应中缺少用户ID或访问token")
-                            logger.error(f"   响应数据: {data}")
-                            user.consecutive_failures += 1
-                            return False
-                    else:
-                        error_msg = data.get('errmsg') or '登录失败'
-                        logger.error(f"❌ 用户 {user} 登录失败: {error_msg}")
-                        user.consecutive_failures += 1
-                        return False
-                        
-                except json.JSONDecodeError:
-                    logger.error(f"❌ 用户 {user} 登录响应不是有效的JSON格式")
-                    logger.error(f"   响应内容: {response.text[:200]}...")
-                    user.consecutive_failures += 1
-                    return False
-            else:
-                logger.error(f"❌ 用户 {user} 登录请求失败: HTTP {response.status_code}")
-                logger.error(f"   响应内容: {response.text[:200]}...")
-                user.consecutive_failures += 1
-                return False
-            
-        except Exception as e:
-            logger.error(f"❌ 用户 {user} 认证异常: {str(e)}")
-            user.consecutive_failures += 1
-            return False
+                            error_msg = data.get('errmsg') or '登录失败'
+                            logger.error(f"❌ 用户 {user} 登录失败: {error_msg}")
+                            logger.error(f"   错误码: {data.get('errcode')}")
+                            logger.error(f"   完整响应: {data}")
+                            if attempt < max_retries - 1:
+                                logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                                time.sleep(retry_delay[attempt])
+                                continue
+                            
+                    except json.JSONDecodeError as e:
+                        logger.error(f"❌ 用户 {user} 登录响应不是有效的JSON格式")
+                        logger.error(f"   JSON解析错误: {str(e)}")
+                        logger.error(f"   响应内容: {response.text[:500]}...")
+                        if attempt < max_retries - 1:
+                            logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                            time.sleep(retry_delay[attempt])
+                            continue
+                else:
+                    logger.error(f"❌ 用户 {user} 登录请求失败: HTTP {response.status_code}")
+                    logger.error(f"   响应头: {dict(response.headers)}")
+                    logger.error(f"   响应内容: {response.text[:500]}...")
+                    if attempt < max_retries - 1:
+                        logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                        time.sleep(retry_delay[attempt])
+                        continue
+                
+            except requests.exceptions.Timeout as e:
+                logger.error(f"❌ 用户 {user} 认证超时: {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                    time.sleep(retry_delay[attempt])
+                    continue
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"❌ 用户 {user} 网络连接错误: {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                    time.sleep(retry_delay[attempt])
+                    continue
+            except Exception as e:
+                logger.error(f"❌ 用户 {user} 认证异常: {str(e)}")
+                logger.error(f"   异常类型: {type(e).__name__}")
+                logger.error(f"   异常详情: {traceback.format_exc()}")
+                if attempt < max_retries - 1:
+                    logger.info(f"   将在 {retry_delay[attempt]} 秒后重试...")
+                    time.sleep(retry_delay[attempt])
+                    continue
+        
+        # 所有重试都失败了
+        logger.error(f"❌ 用户 {user} 认证失败，已重试 {max_retries} 次")
+        user.consecutive_failures += 1
+        return False
 
     def punch_clock_for_user(self, user: EMobileUser, sign_type: str) -> bool:
         """为指定用户执行打卡"""
